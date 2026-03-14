@@ -172,17 +172,24 @@ export class Toolpack extends EventEmitter {
         let defaultProviderName = config.defaultProvider || config.provider;
 
         if (config.providers) {
-            // Multi-provider mode
+            // Multi-provider mode - skip providers without API keys (they can be used later if keys are set)
             for (const [name, opts] of Object.entries(config.providers)) {
-                providers[name] = await Toolpack.createProvider(name, opts, config.configPath);
+                const isDefault = name === defaultProviderName;
+                const provider = await Toolpack.createProvider(name, opts, config.configPath, !isDefault);
+                if (provider) {
+                    providers[name] = provider;
+                }
             }
         } else if (config.provider) {
-            // Single-provider mode
+            // Single-provider mode - API key is required
             const opts: ProviderOptions = {
                 apiKey: config.apiKey,
                 model: config.model,
             };
-            providers[config.provider] = await Toolpack.createProvider(config.provider, opts, config.configPath);
+            const provider = await Toolpack.createProvider(config.provider, opts, config.configPath, false);
+            if (provider) {
+                providers[config.provider] = provider;
+            }
         } else if (!config.customProviders) {
             throw new Error('No provider specified. Pass { provider: "name" }, { providers: { ... } }, or { customProviders: { ... } } to init().');
         }
@@ -302,13 +309,16 @@ export class Toolpack extends EventEmitter {
     /**
      * Factory to create provider instances.
      */
-    private static async createProvider(name: string, opts: ProviderOptions, configPath?: string): Promise<ProviderAdapter> {
+    private static async createProvider(name: string, opts: ProviderOptions, configPath?: string, skipIfNoKey = false): Promise<ProviderAdapter | null> {
         // 1. API Providers
         if (['openai', 'anthropic', 'gemini'].includes(name)) {
             const envKey = `TOOLPACK_${name.toUpperCase()}_KEY`;
             const apiKey = opts.apiKey || process.env[envKey] || process.env[`${name.toUpperCase()}_API_KEY`];
 
             if (!apiKey) {
+                if (skipIfNoKey) {
+                    return null; // Skip this provider silently - no API key configured
+                }
                 throw new Error(`No API key found for '${name}'. Set ${envKey} or pass apiKey in config.`);
             }
 
