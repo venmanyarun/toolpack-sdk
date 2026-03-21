@@ -16,6 +16,7 @@ A unified TypeScript/Node.js SDK for building AI-powered applications with multi
 - **Embeddings** — Vector generation for RAG applications (OpenAI, Gemini, Ollama)
 - **Workflow Engine** — AI-driven planning and step-by-step task execution with progress events
 - **Mode System** — Built-in Agent and Chat modes, plus `createMode()` for custom modes with tool filtering
+- **Persistent Knowledge** — File-system provider with cached embeddings under `~/.toolpack/knowledge/<namespace>`
 - **Custom Providers** — Bring your own provider by implementing the `ProviderAdapter` interface
 - **77 Built-in Tools** across 10 categories:
 
@@ -486,7 +487,7 @@ When you provide a `knowledge` option, the SDK automatically:
 |-----------|---------|---------|
 | **Sources** | Load and chunk content | `MarkdownSource`, `JSONSource`, `SQLiteTextSource` |
 | **Embedders** | Convert text to vectors | `OllamaEmbedder`, `OpenAIEmbedder`, `GeminiEmbedder` |
-| **Providers** | Store and query vectors | `MemoryProvider` |
+| **Providers** | Store and query vectors | `MemoryProvider`, `PersistentKnowledgeProvider` |
 
 ### Sources
 
@@ -524,6 +525,28 @@ const kb = await Knowledge.create({
   embedder: new OpenAIEmbedder({ model: 'text-embedding-3-small' }),
 });
 ```
+
+### Providers
+
+```typescript
+import { PersistentKnowledgeProvider } from 'toolpack-sdk';
+
+// In-memory (reset each run)
+const memoryProvider = new MemoryProvider();
+
+// Persistent cache under ~/.toolpack/knowledge/<namespace>
+const persistentProvider = new PersistentKnowledgeProvider({
+	namespace: 'cli',
+});
+
+const kb = await Knowledge.create({
+	provider: persistentProvider,
+	sources: [new MarkdownSource('./docs', {namespace: 'docs'})],
+	reSync: false, // Skip re-embedding if cached chunks already exist
+});
+```
+
+`PersistentKnowledgeProvider` stores every embedded chunk as a JSON file on disk so subsequent launches can skip expensive re-embedding. When `reSync` is `false`, `Knowledge.create()` automatically checks `provider.hasStoredChunks()` and only ingests sources if the cache is empty. Set `reSync: true` (default) or delete the namespace directory to force a rebuild after changing sources or embedders.
 
 ### Direct Query
 
