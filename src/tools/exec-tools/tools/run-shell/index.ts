@@ -6,7 +6,8 @@ import { logDebug } from '../../../../providers/provider-logger.js';
 function getDefaultShell(): string {
     const platform = process.platform;
     if (platform === 'win32') {
-        return process.env.COMSPEC || 'cmd.exe';
+        // Use PowerShell on Windows for better shell feature support
+        return 'powershell.exe';
     }
     return process.env.SHELL || '/bin/sh';
 }

@@ -16,9 +16,11 @@ describe('system.disk_usage tool', () => {
         expect(result.usePercent).toBeDefined();
     });
 
-    it('should return disk usage for /tmp', async () => {
-        const result = JSON.parse(await systemDiskUsageTool.execute({ path: '/tmp' }));
-        expect(result.path).toBe('/tmp');
+    it('should return disk usage for a specific path', async () => {
+        const isWindows = process.platform === 'win32';
+        const testPath = isWindows ? 'C:\\Windows' : '/tmp';
+        const result = JSON.parse(await systemDiskUsageTool.execute({ path: testPath }));
+        expect(result.path).toBe(testPath);
         expect(result.filesystem).toBeDefined();
     });
 });
