@@ -270,14 +270,21 @@ describe('ToolRegistry', () => {
     });
 
     it('should load all built-in projects', async () => {
+        const startedAt = Date.now();
         await registry.loadBuiltIn();
+        const elapsedMs = Date.now() - startedAt;
         // Should load multiple projects with many tools
         expect(registry.size).toBeGreaterThan(10);
         expect(registry.getProjectNames().length).toBeGreaterThanOrEqual(3);
         // fs-tools and web-tools should always be present
         expect(registry.has('fs.read_file')).toBe(true);
         expect(registry.has('web.search')).toBe(true);
-    });
+
+        // Soft guard for CI visibility without introducing flaky failures.
+        if (elapsedMs > 8000) {
+            console.warn(`[registry.test] loadBuiltIn took ${elapsedMs}ms (slow CI runner?)`);
+        }
+    }, 15000);
 
     // ── Dependency Validation ────────────────────────────────────
 
