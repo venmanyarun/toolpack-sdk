@@ -1,0 +1,14 @@
+{
+  "name": "toolpack-knowledge",
+  "version": "1.0.0",
+  "description": "Knowledge capabilities for the Toolpack SDK",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "rm -rf dist && tsc",
+    "watch": "tsc -w",
+    "test": "vitest run"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}

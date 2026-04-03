@@ -15,7 +15,7 @@ export class GrammarManager {
         if (!this.isInitialized) {
             await Parser.init({
                 locateFile(scriptName: string, _scriptDirectory: string) {
-                    return path.join(__dirname, '../../../../node_modules/web-tree-sitter', scriptName);
+                    return path.join(__dirname, '../../../../../../node_modules/web-tree-sitter', scriptName);
                 }
             });
             this.isInitialized = true;
@@ -38,7 +38,7 @@ export class GrammarManager {
         const filename = `tree-sitter-${language}.wasm`;
 
         // 1. Check node_modules (tree-sitter-wasms package)
-        const npmPath = path.resolve(__dirname, '../../../../node_modules/tree-sitter-wasms/out', filename);
+        const npmPath = path.resolve(__dirname, '../../../../../../node_modules/tree-sitter-wasms/out', filename);
         if (fs.existsSync(npmPath)) {
             return npmPath;
         }
