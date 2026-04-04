@@ -17,6 +17,7 @@ import { getOllamaBaseUrl } from './providers/config';
 import { initLogger, logWarn,logError,logInfo } from './providers/provider-logger';
 import { ToolRegistry } from './tools/registry';
 import { loadToolsConfig, loadFullConfig, ToolProject } from './tools';
+import { ToolDefinition } from './tools/types';
 import { ModeConfig } from './modes/mode-types.js';
 import { ModeRegistry } from './modes/mode-registry.js';
 import { DEFAULT_MODE_NAME } from './modes/built-in-modes.js';
@@ -99,8 +100,28 @@ export interface ToolpackInitConfig {
      * Optional Knowledge instance for RAG (Retrieval-Augmented Generation).
      * When provided, the knowledge base will be registered as a tool that the AI can use to search documentation.
      * Can be null if initialization fails - will be gracefully skipped.
+     * 
+     * Accepts any object with a `toTool()` method (e.g. `Knowledge` from `@toolpack-sdk/knowledge`).
      */
-    knowledge?: any | null; // Using 'any' to avoid circular dependency with toolpack-knowledge
+    knowledge?: KnowledgeInstance | null;
+}
+
+/**
+ * Duck-typed interface for Knowledge instances to avoid circular dependency
+ * with the @toolpack-sdk/knowledge package.
+ */
+export interface KnowledgeInstance {
+    toTool(): {
+        name: string;
+        displayName: string;
+        description: string;
+        category: string;
+        cacheable?: boolean;
+        parameters: Record<string, unknown>;
+        execute: (params: Record<string, unknown>) => Promise<unknown>;
+    };
+    query(text: string, options?: Record<string, unknown>): Promise<unknown[]>;
+    stop(): Promise<void>;
 }
 
 export class Toolpack extends EventEmitter {
@@ -165,7 +186,7 @@ export class Toolpack extends EventEmitter {
                         tools: ['knowledge_search'],
                         category: 'search',
                     },
-                    tools: [knowledgeTool],
+                    tools: [knowledgeTool as unknown as ToolDefinition],
                 };
                 await registry.loadProjects([knowledgeProject]);
                 logInfo('[Knowledge] Registered knowledge_search tool');

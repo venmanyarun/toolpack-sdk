@@ -138,7 +138,7 @@ describe('Knowledge', () => {
           }
           return [0.5, 0.5, 0.1];
         }),
-        embedBatch: vi.fn(async () => []),
+        embedBatch: vi.fn(async () => { throw new Error('Batch not supported'); }),
       };
 
       const source = createMockSource([
@@ -157,7 +157,8 @@ describe('Knowledge', () => {
         onError,
       });
 
-      expect(onError).toHaveBeenCalledTimes(1);
+      // Called once for batch error (skip → fallback) + once for chunk 2 individual error (skip)
+      expect(onError).toHaveBeenCalledTimes(2);
 
       const results = await kb.query('test', { threshold: 0 });
       expect(results.length).toBe(2);
@@ -172,14 +173,19 @@ describe('Knowledge', () => {
         embed: vi.fn(async () => {
           throw new Error('Always fails');
         }),
-        embedBatch: vi.fn(async () => []),
+        embedBatch: vi.fn(async () => { throw new Error('Batch failed'); }),
       };
 
       const source = createMockSource([
         { id: 'c1', content: 'Chunk 1', metadata: {} },
       ]);
 
-      const onError = vi.fn(() => 'abort' as const);
+      let callCount = 0;
+      const onError = vi.fn(() => {
+        callCount++;
+        // Skip batch error to trigger fallback, abort on individual embed error
+        return callCount === 1 ? 'skip' as const : 'abort' as const;
+      });
 
       await expect(
         Knowledge.create({

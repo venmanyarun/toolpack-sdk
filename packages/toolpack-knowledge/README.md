@@ -5,7 +5,7 @@ RAG (Retrieval-Augmented Generation) package for Toolpack SDK.
 ## Installation
 
 ```bash
-npm install toolpack-knowledge
+npm install @toolpack-sdk/knowledge
 ```
 
 ## Quick Start
@@ -13,7 +13,7 @@ npm install toolpack-knowledge
 ### Development (Zero Infrastructure)
 
 ```typescript
-import { Knowledge, MemoryProvider, MarkdownSource, OllamaEmbedder } from 'toolpack-knowledge';
+import { Knowledge, MemoryProvider, MarkdownSource, OllamaEmbedder } from '@toolpack-sdk/knowledge';
 
 const kb = await Knowledge.create({
   provider: new MemoryProvider(),
@@ -29,7 +29,7 @@ console.log(results[0].chunk.content);
 ### Production (Persistent)
 
 ```typescript
-import { Knowledge, PersistentKnowledgeProvider, MarkdownSource, OpenAIEmbedder } from 'toolpack-knowledge';
+import { Knowledge, PersistentKnowledgeProvider, MarkdownSource, OpenAIEmbedder } from '@toolpack-sdk/knowledge';
 
 const kb = await Knowledge.create({
   provider: new PersistentKnowledgeProvider({
@@ -58,7 +58,7 @@ const results = await kb.query('authentication setup', {
 
 ```typescript
 import { Toolpack } from 'toolpack-sdk';
-import { Knowledge, MemoryProvider, MarkdownSource, OllamaEmbedder } from 'toolpack-knowledge';
+import { Knowledge, MemoryProvider, MarkdownSource, OllamaEmbedder } from '@toolpack-sdk/knowledge';
 
 const kb = await Knowledge.create({
   provider: new MemoryProvider(),

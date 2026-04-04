@@ -37,6 +37,7 @@ export interface KnowledgeProvider {
   delete(ids: string[]): Promise<void>;
   clear(): Promise<void>;
   validateDimensions(dimensions: number): Promise<void>;
+  close?(): void;
 }
 
 export interface KnowledgeSource {

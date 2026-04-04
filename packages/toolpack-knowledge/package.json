@@ -1,6 +1,6 @@
 {
-  "name": "toolpack-knowledge",
-  "version": "1.2.0-SNAPSHOT.04032026",
+  "name": "@toolpack-sdk/knowledge",
+  "version": "1.2.0-SNAPSHOT.04032026-2",
   "description": "RAG (Retrieval-Augmented Generation) package for Toolpack SDK",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

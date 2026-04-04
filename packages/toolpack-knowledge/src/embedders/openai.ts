@@ -54,14 +54,24 @@ export class OpenAIEmbedder implements Embedder {
   }
 
   async embedBatch(texts: string[]): Promise<number[][]> {
-    try {
-      const response = await this.client.embeddings.create({
-        model: this.options.model,
-        input: texts,
-      });
-      return response.data.map(d => d.embedding);
-    } catch (error) {
-      throw new EmbeddingError(`OpenAI batch embedding failed: ${(error as Error).message}`);
+    let lastError: Error | null = null;
+    const retries = this.options.retries || 3;
+    
+    for (let attempt = 0; attempt < retries; attempt++) {
+      try {
+        const response = await this.client.embeddings.create({
+          model: this.options.model,
+          input: texts,
+        });
+        return response.data.map(d => d.embedding);
+      } catch (error) {
+        lastError = error as Error;
+        if (attempt < retries - 1) {
+          await new Promise(resolve => setTimeout(resolve, this.options.retryDelay || 1000));
+        }
+      }
     }
+    
+    throw new EmbeddingError(`OpenAI batch embedding failed after ${retries} retries: ${lastError?.message}`);
   }
 }

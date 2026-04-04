@@ -1,5 +1,4 @@
 import { KnowledgeProvider, KnowledgeSource, Embedder, QueryOptions, QueryResult, Chunk } from './interfaces.js';
-import { PersistentKnowledgeProvider } from './providers/persistent.js';
 
 export interface KnowledgeOptions {
   provider: KnowledgeProvider;
@@ -57,8 +56,8 @@ export class Knowledge {
 
     const userWantsSync = options.reSync !== false;
 
-    if (!userWantsSync && options.provider instanceof PersistentKnowledgeProvider) {
-      if (options.provider.shouldReSync()) {
+    if (!userWantsSync && 'shouldReSync' in options.provider) {
+      if ((options.provider as any).shouldReSync()) {
         await kb.sync();
       }
       return kb;
@@ -106,12 +105,18 @@ export class Knowledge {
   }
 
   private async embedChunks(chunks: Chunk[]): Promise<Chunk[]> {
+    if (chunks.length === 0) {
+      return [];
+    }
+
     const embeddedChunks: Chunk[] = [];
     
-    for (let i = 0; i < chunks.length; i++) {
-      try {
-        const vector = await this.embedder.embed(chunks[i].content);
-        embeddedChunks.push({ ...chunks[i], vector });
+    try {
+      const texts = chunks.map(c => c.content);
+      const embeddings = await this.embedder.embedBatch(texts);
+      
+      for (let i = 0; i < chunks.length; i++) {
+        embeddedChunks.push({ ...chunks[i], vector: embeddings[i] });
         
         this.options.onEmbeddingProgress?.({
           source: 'sync',
@@ -119,10 +124,31 @@ export class Knowledge {
           total: chunks.length,
           percent: Math.round(((i + 1) / chunks.length) * 100),
         });
-      } catch (error) {
-        const action = this.options.onError?.(error as Error, { chunk: chunks[i] });
-        if (action === 'abort') {
-          throw error;
+      }
+    } catch (error) {
+      const action = this.options.onError?.(error as Error, {});
+      if (action === 'abort') {
+        throw error;
+      }
+      
+      // Fallback to individual embedding on batch failure
+      for (let i = 0; i < chunks.length; i++) {
+        try {
+          const vector = await this.embedder.embed(chunks[i].content);
+          embeddedChunks.push({ ...chunks[i], vector });
+          
+          this.options.onEmbeddingProgress?.({
+            source: 'sync',
+            current: i + 1,
+            total: chunks.length,
+            percent: Math.round(((i + 1) / chunks.length) * 100),
+          });
+        } catch (embedError) {
+          const skipAction = this.options.onError?.(embedError as Error, { chunk: chunks[i] });
+          if (skipAction === 'abort') {
+            throw embedError;
+          }
+          // Skip this chunk if action is 'skip'
         }
       }
     }
@@ -131,7 +157,7 @@ export class Knowledge {
   }
 
   async stop(): Promise<void> {
-    if (this.provider instanceof PersistentKnowledgeProvider) {
+    if (this.provider.close) {
       this.provider.close();
     }
   }

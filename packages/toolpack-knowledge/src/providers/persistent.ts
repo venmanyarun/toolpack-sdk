@@ -151,7 +151,7 @@ export class PersistentKnowledgeProvider implements KnowledgeProvider {
 
   async clear(): Promise<void> {
     this.db.prepare('DELETE FROM chunks').run();
-    this.db.prepare('DELETE FROM provider_meta').run();
+    this.db.prepare('DELETE FROM provider_meta WHERE key = ?').run('dimensions');
     this.dimensions = undefined;
   }
 

@@ -12,7 +12,7 @@ Welcome to the documentation!
 To install the package, run:
 
 ```bash
-npm install toolpack-knowledge
+npm install @toolpack-sdk/knowledge
 ```
 
 ## Quick Start
@@ -20,7 +20,7 @@ npm install toolpack-knowledge
 Here's a simple example:
 
 ```typescript
-import { Knowledge, MemoryProvider } from 'toolpack-knowledge';
+import { Knowledge, MemoryProvider } from '@toolpack-sdk/knowledge';
 
 const kb = await Knowledge.create({
   provider: new MemoryProvider(),
