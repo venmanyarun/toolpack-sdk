@@ -20,21 +20,32 @@
     "build:dev": "tsup",
     "test": "vitest run",
     "test:watch": "vitest",
-    "watch": "tsup --watch"
+    "watch": "tsup --watch",
+    "publish:npm": "npm run build && npm run test && npm publish --access public"
   },
   "keywords": [
+    "ai",
+    "llm",
     "rag",
     "retrieval",
     "embeddings",
     "vector-search",
     "knowledge-base",
-    "ai"
+    "sdk"
   ],
   "engines": {
     "node": ">=20"
   },
   "author": "Sajeer (https://sajeerzeji.com)",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/toolpack-ai/toolpack-sdk.git"
+  },
+  "homepage": "https://toolpacksdk.com",
+  "bugs": {
+    "url": "https://github.com/toolpack-ai/toolpack-sdk/issues"
+  },
   "dependencies": {
     "better-sqlite3": "^12.6.2",
     "fast-glob": "^3.3.3",
