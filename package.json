@@ -9,5 +9,8 @@
     "test": "npm run test -w packages/toolpack-knowledge && npm run test -w packages/toolpack-sdk",
     "lint": "eslint packages/*/src/**",
     "version": "node scripts/update-version.js"
+  },
+  "devDependencies": {
+    "tsup": "^8.5.1"
   }
 }

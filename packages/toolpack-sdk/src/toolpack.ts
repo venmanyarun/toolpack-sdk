@@ -1,5 +1,5 @@
 import { EventEmitter } from 'events';
-import { AIClient } from './client';
+import { AIClient } from './client/index.js';
 import {
     ProviderAdapter,
     CompletionRequest,
@@ -7,23 +7,23 @@ import {
     CompletionChunk,
     EmbeddingRequest,
     EmbeddingResponse,
-} from './providers/base';
-import { ProviderInfo, ProviderModelInfo } from './types';
-import { OpenAIAdapter } from './providers/openai';
-import { AnthropicAdapter } from './providers/anthropic';
-import { GeminiAdapter } from './providers/gemini';
-import { OllamaAdapter, OllamaProvider } from './providers/ollama';
-import { getOllamaBaseUrl } from './providers/config';
-import { initLogger, logWarn,logError,logInfo } from './providers/provider-logger';
-import { ToolRegistry } from './tools/registry';
-import { loadToolsConfig, loadFullConfig, ToolProject } from './tools';
-import { ToolDefinition } from './tools/types';
+} from './providers/base/index.js';
+import { ProviderInfo, ProviderModelInfo } from "./types/index.js";
+import { OpenAIAdapter } from './providers/openai/index.js';
+import { AnthropicAdapter } from './providers/anthropic/index.js';
+import { GeminiAdapter } from './providers/gemini/index.js';
+import { OllamaAdapter, OllamaProvider } from './providers/ollama/index.js';
+import { getOllamaBaseUrl } from './providers/config.js';
+import { initLogger, logWarn,logError,logInfo } from './providers/provider-logger.js';
+import { ToolRegistry } from './tools/registry.js';
+import { loadToolsConfig, loadFullConfig, ToolProject } from './tools/index.js';
+import { ToolDefinition } from './tools/types.js';
 import { ModeConfig } from './modes/mode-types.js';
 import { ModeRegistry } from './modes/mode-registry.js';
 import { DEFAULT_MODE_NAME } from './modes/built-in-modes.js';
 import { WorkflowExecutor } from './workflows/workflow-executor.js';
 import { DEFAULT_WORKFLOW_CONFIG } from './workflows/workflow-types.js';
-import { createMcpToolProject, disconnectMcpToolProject, McpToolsConfig } from './tools';
+import { createMcpToolProject, disconnectMcpToolProject, McpToolsConfig } from './tools/index.js';
 
 export interface ProviderOptions {
     /**
@@ -117,10 +117,14 @@ export interface KnowledgeInstance {
         description: string;
         category: string;
         cacheable?: boolean;
-        parameters: Record<string, unknown>;
-        execute: (params: Record<string, unknown>) => Promise<unknown>;
+        parameters: {
+            type: string;
+            properties: Record<string, unknown>;
+            required: string[];
+        };
+        execute: (params: { query: string; limit?: number; threshold?: number; filter?: Record<string, string | number | boolean | { $in: unknown[] } | { $gt: number } | { $lt: number }> }) => Promise<any>;
     };
-    query(text: string, options?: Record<string, unknown>): Promise<unknown[]>;
+    query(text: string, options?: Record<string, unknown>): Promise<any[]>;
     stop(): Promise<void>;
 }
 

@@ -1,7 +1,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as crypto from 'crypto';
-import { glob } from 'fast-glob';
+import fg from 'fast-glob';
 import { KnowledgeSource, Chunk } from '../interfaces.js';
 import { IngestionError } from '../errors.js';
 import { estimateTokens, splitLargeChunk, applyOverlap } from '../utils/chunking.js';
@@ -37,7 +37,7 @@ export class MarkdownSource implements KnowledgeSource {
   }
 
   async *load(): AsyncIterable<Chunk> {
-    const files = await glob(this.pattern, { absolute: true });
+    const files = await fg(this.pattern, { absolute: true });
     
     for (const file of files) {
       try {
