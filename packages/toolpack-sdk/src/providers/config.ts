@@ -211,7 +211,7 @@ export async function addBypassRule(options: AddBypassRuleOptions): Promise<void
 
     try {
         // Load existing config or create empty one
-        let config: ToolpackConfig = loadConfig(configPath) || {};
+        const config: ToolpackConfig = loadConfig(configPath) || {};
 
         // Ensure hitl config exists
         if (!config.hitl) {
@@ -241,7 +241,7 @@ export async function addBypassRule(options: AddBypassRuleOptions): Promise<void
                     config.hitl.bypass.categories.push(value);
                 }
                 break;
-            case 'level':
+            case 'level': {
                 if (!config.hitl.bypass.levels) {
                     config.hitl.bypass.levels = [];
                 }
@@ -250,6 +250,7 @@ export async function addBypassRule(options: AddBypassRuleOptions): Promise<void
                     config.hitl.bypass.levels.push(level);
                 }
                 break;
+            }
         }
 
         // Write config back to file
