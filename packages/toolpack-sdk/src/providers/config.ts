@@ -1,8 +1,27 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { ModeConfig } from '../modes/mode-types.js';
+import { SDKError } from '../errors/index.js';
 
 const CONFIG_FILENAME = 'toolpack.config.json';
+
+// Simple file lock for config writes to prevent race conditions
+const configLocks = new Map<string, Promise<void>>();
+
+async function acquireConfigLock(configPath: string): Promise<() => void> {
+    while (configLocks.has(configPath)) {
+        await configLocks.get(configPath);
+    }
+    let release: () => void;
+    const lockPromise = new Promise<void>((resolve) => {
+        release = resolve;
+    });
+    configLocks.set(configPath, lockPromise);
+    return () => {
+        configLocks.delete(configPath);
+        release!();
+    };
+}
 
 // ============================================================================
 // Types
@@ -181,59 +200,74 @@ export async function addBypassRule(options: AddBypassRuleOptions): Promise<void
 
     // Determine config file path
     let configPath = explicitPath || discoverConfigPath();
-    
+
     // If no config exists, create one in CWD
     if (!configPath) {
         configPath = path.join(process.cwd(), CONFIG_FILENAME);
     }
 
-    // Load existing config or create empty one
-    let config: ToolpackConfig = loadConfig(configPath) || {};
+    // Acquire lock to prevent concurrent writes
+    const release = await acquireConfigLock(configPath);
 
-    // Ensure hitl config exists
-    if (!config.hitl) {
-        config.hitl = {};
+    try {
+        // Load existing config or create empty one
+        let config: ToolpackConfig = loadConfig(configPath) || {};
+
+        // Ensure hitl config exists
+        if (!config.hitl) {
+            config.hitl = {};
+        }
+
+        // Ensure bypass section exists
+        if (!config.hitl.bypass) {
+            config.hitl.bypass = {};
+        }
+
+        // Add the bypass rule based on type
+        switch (type) {
+            case 'tool':
+                if (!config.hitl.bypass.tools) {
+                    config.hitl.bypass.tools = [];
+                }
+                if (!config.hitl.bypass.tools.includes(value)) {
+                    config.hitl.bypass.tools.push(value);
+                }
+                break;
+            case 'category':
+                if (!config.hitl.bypass.categories) {
+                    config.hitl.bypass.categories = [];
+                }
+                if (!config.hitl.bypass.categories.includes(value)) {
+                    config.hitl.bypass.categories.push(value);
+                }
+                break;
+            case 'level':
+                if (!config.hitl.bypass.levels) {
+                    config.hitl.bypass.levels = [];
+                }
+                const level = value as ConfirmationLevel;
+                if (!config.hitl.bypass.levels.includes(level)) {
+                    config.hitl.bypass.levels.push(level);
+                }
+                break;
+        }
+
+        // Write config back to file
+        try {
+            fs.writeFileSync(configPath, JSON.stringify(config, null, 4), 'utf-8');
+        } catch (error) {
+            throw new SDKError(
+                `Failed to write bypass rule to config file: ${error instanceof Error ? error.message : String(error)}`,
+                'CONFIG_WRITE_ERROR'
+            );
+        }
+
+        // Clear cache so next read gets updated config
+        reloadToolpackConfig();
+    } finally {
+        // Always release the lock
+        release();
     }
-
-    // Ensure bypass section exists
-    if (!config.hitl.bypass) {
-        config.hitl.bypass = {};
-    }
-
-    // Add the bypass rule based on type
-    switch (type) {
-        case 'tool':
-            if (!config.hitl.bypass.tools) {
-                config.hitl.bypass.tools = [];
-            }
-            if (!config.hitl.bypass.tools.includes(value)) {
-                config.hitl.bypass.tools.push(value);
-            }
-            break;
-        case 'category':
-            if (!config.hitl.bypass.categories) {
-                config.hitl.bypass.categories = [];
-            }
-            if (!config.hitl.bypass.categories.includes(value)) {
-                config.hitl.bypass.categories.push(value);
-            }
-            break;
-        case 'level':
-            if (!config.hitl.bypass.levels) {
-                config.hitl.bypass.levels = [];
-            }
-            const level = value as ConfirmationLevel;
-            if (!config.hitl.bypass.levels.includes(level)) {
-                config.hitl.bypass.levels.push(level);
-            }
-            break;
-    }
-
-    // Write config back to file
-    fs.writeFileSync(configPath, JSON.stringify(config, null, 4), 'utf-8');
-    
-    // Clear cache so next read gets updated config
-    reloadToolpackConfig();
 }
 
 /**
@@ -249,32 +283,47 @@ export async function removeBypassRule(options: AddBypassRuleOptions): Promise<v
     const configPath = explicitPath || discoverConfigPath();
     if (!configPath) return; // No config to modify
 
-    // Load existing config
-    const config = loadConfig(configPath);
-    if (!config?.hitl?.bypass) return; // No bypass rules to remove
+    // Acquire lock to prevent concurrent writes
+    const release = await acquireConfigLock(configPath);
 
-    // Remove the bypass rule based on type
-    switch (type) {
-        case 'tool':
-            if (config.hitl.bypass.tools) {
-                config.hitl.bypass.tools = config.hitl.bypass.tools.filter(t => t !== value);
-            }
-            break;
-        case 'category':
-            if (config.hitl.bypass.categories) {
-                config.hitl.bypass.categories = config.hitl.bypass.categories.filter(c => c !== value);
-            }
-            break;
-        case 'level':
-            if (config.hitl.bypass.levels) {
-                config.hitl.bypass.levels = config.hitl.bypass.levels.filter(l => l !== value);
-            }
-            break;
+    try {
+        // Load existing config
+        const config = loadConfig(configPath);
+        if (!config?.hitl?.bypass) return; // No bypass rules to remove
+
+        // Remove the bypass rule based on type
+        switch (type) {
+            case 'tool':
+                if (config.hitl.bypass.tools) {
+                    config.hitl.bypass.tools = config.hitl.bypass.tools.filter(t => t !== value);
+                }
+                break;
+            case 'category':
+                if (config.hitl.bypass.categories) {
+                    config.hitl.bypass.categories = config.hitl.bypass.categories.filter(c => c !== value);
+                }
+                break;
+            case 'level':
+                if (config.hitl.bypass.levels) {
+                    config.hitl.bypass.levels = config.hitl.bypass.levels.filter(l => l !== value);
+                }
+                break;
+        }
+
+        // Write config back to file
+        try {
+            fs.writeFileSync(configPath, JSON.stringify(config, null, 4), 'utf-8');
+        } catch (error) {
+            throw new SDKError(
+                `Failed to remove bypass rule from config file: ${error instanceof Error ? error.message : String(error)}`,
+                'CONFIG_WRITE_ERROR'
+            );
+        }
+
+        // Clear cache
+        reloadToolpackConfig();
+    } finally {
+        // Always release the lock
+        release();
     }
-
-    // Write config back to file
-    fs.writeFileSync(configPath, JSON.stringify(config, null, 4), 'utf-8');
-    
-    // Clear cache
-    reloadToolpackConfig();
 }

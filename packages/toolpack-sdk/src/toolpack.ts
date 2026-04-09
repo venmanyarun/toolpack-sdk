@@ -13,7 +13,7 @@ import { OpenAIAdapter } from './providers/openai/index.js';
 import { AnthropicAdapter } from './providers/anthropic/index.js';
 import { GeminiAdapter } from './providers/gemini/index.js';
 import { OllamaAdapter, OllamaProvider } from './providers/ollama/index.js';
-import { getOllamaBaseUrl } from './providers/config.js';
+import { getOllamaBaseUrl, loadConfig, discoverConfigPath } from './providers/config.js';
 import { initLogger, logWarn,logError,logInfo } from './providers/provider-logger.js';
 import { ToolRegistry } from './tools/registry.js';
 import { loadToolsConfig, loadFullConfig, ToolProject } from './tools/index.js';
@@ -573,14 +573,17 @@ export class Toolpack extends EventEmitter {
      * Call this after modifying config (e.g., bypass rules) to apply changes immediately.
      */
     reloadConfig(configPath?: string): void {
-        const { loadConfig, discoverConfigPath } = require('./providers/config.js');
         const path = configPath || discoverConfigPath();
         if (path) {
-            const config = loadConfig(path);
-            if (config?.hitl) {
-                this.client.updateHitlConfig(config.hitl);
+            try {
+                const config = loadConfig(path);
+                if (config?.hitl) {
+                    this.client.updateHitlConfig(config.hitl);
+                }
+                // Future: Add other config reloading here as needed
+            } catch (error) {
+                logWarn(`[Toolpack] Failed to reload config from ${path}: ${error instanceof Error ? error.message : String(error)}`);
             }
-            // Future: Add other config reloading here as needed
         }
     }
 
