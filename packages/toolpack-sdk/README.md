@@ -1,6 +1,6 @@
 # Toolpack SDK
 
-A unified TypeScript/Node.js SDK for building AI-powered applications with multiple providers, 79 built-in tools, a workflow engine, and a flexible mode system — all through a single API.
+A unified TypeScript/Node.js SDK for building AI-powered applications with multiple providers, 90 built-in tools, a workflow engine, and a flexible mode system — all through a single API.
 
 [![npm version](https://img.shields.io/npm/v/toolpack-sdk.svg)](https://www.npmjs.com/package/toolpack-sdk)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
@@ -18,7 +18,7 @@ A unified TypeScript/Node.js SDK for building AI-powered applications with multi
 - **Mode System** — Built-in Agent and Chat modes, plus `createMode()` for custom modes with tool filtering
 - **HITL Confirmation** — Human-in-the-loop approval for high-risk operations with configurable bypass rules
 - **Custom Providers** — Bring your own provider by implementing the `ProviderAdapter` interface
-- **79 Built-in Tools** across 10 categories:
+- **90 Built-in Tools** across 11 categories:
 - **MCP Tool Server Integration** — dynamically bridge external Model Context Protocol servers into Toolpack as first-class tools via `createMcpToolProject()` and `disconnectMcpToolProject()`.
 
 | Category | Tools | Description |
@@ -33,6 +33,7 @@ A unified TypeScript/Node.js SDK for building AI-powered applications with multi
 | **`system-tools`** | 5 | System info — env vars, cwd, disk usage, system info, set env |
 | **`diff-tools`** | 3 | Patch operations — create, apply, and preview diffs |
 | **`cloud-tools`** | 3 | Deployments — deploy, status, list (via Netlify) |
+| **`k8s-tools`** | 11 | Kubernetes cluster inspection and management via kubectl |
 | **`mcp-tools`** | 2 | MCP integration — createMcpToolProject, disconnectMcpToolProject |
 
 ## Quick Start
@@ -59,7 +60,7 @@ const sdk = await Toolpack.init({
     anthropic: {},   // Reads ANTHROPIC_API_KEY from env
   },
   defaultProvider: 'openai',
-  tools: true,         // Load all 79 built-in tools
+  tools: true,         // Load all 90 built-in tools
   defaultMode: 'agent', // Agent mode with workflow engine
 });
 
@@ -90,6 +91,44 @@ const sdk = await Toolpack.init({
   tools: true,
 });
 ```
+
+## Kubernetes Tools
+
+Toolpack SDK now includes a dedicated Kubernetes tool category that exposes `kubectl`-backed operations when `tools: true` is enabled. Use these tools to inspect cluster state, fetch pod logs, apply manifests, and wait for rollout status.
+
+```typescript
+const sdk = await Toolpack.init({
+  provider: 'openai',
+  tools: true,
+  defaultMode: 'agent',
+});
+
+const podsResponse = await sdk.generate({
+  model: 'gpt-4o',
+  messages: [
+    {
+      role: 'user',
+      content: 'List pods in the default namespace using Kubernetes tools.',
+    },
+  ],
+});
+console.log(podsResponse.content);
+
+const applyResponse = await sdk.generate({
+  model: 'gpt-4o',
+  messages: [
+    {
+      role: 'user',
+      content: 'Apply the manifest at ./deploy/my-app.yaml to the staging namespace using Kubernetes tools.',
+    },
+  ],
+});
+console.log(applyResponse.content);
+```
+
+> Requires `kubectl` installed and configured with a valid kubeconfig.
+
+See `packages/toolpack-sdk/docs/examples/kubernetes-usage.ts` for a complete example.
 
 ## Providers
 
@@ -509,7 +548,7 @@ client.on('tool:failed', (event) => { /* ... */ });
 
 ## Custom Tools
 
-In addition to the 79 built-in tools, you can create and register your own custom tool projects using `createToolProject()`:
+In addition to the 90 built-in tools, you can create and register your own custom tool projects using `createToolProject()`:
 
 ```typescript
 import { Toolpack, createToolProject } from 'toolpack-sdk';
@@ -972,7 +1011,7 @@ toolpack-sdk/
 │   │   └── ollama/        # Ollama adapter + provider (auto-discovery)
 │   ├── modes/             # Mode system (Agent, Chat, createMode)
 │   ├── workflows/         # Workflow engine (planner, step executor, progress)
-│   ├── tools/             # 79 built-in tools + registry + router + BM25 search
+│   ├── tools/             # 90 built-in tools + registry + router + BM25 search
 │   │   ├── fs-tools/      # File system (18 tools)
 │   │   ├── coding-tools/  # Code analysis (12 tools)
 │   │   ├── git-tools/     # Git operations (9 tools)
@@ -983,6 +1022,7 @@ toolpack-sdk/
 │   │   ├── system-tools/  # System info (5 tools)
 │   │   ├── diff-tools/    # Patch operations (3 tools)
 │   │   ├── cloud-tools/   # Deployments (3 tools)
+│   │   ├── k8s-tools/     # Kubernetes management (11 tools)
 │   │   ├── registry.ts    # Tool registry and loading
 │   │   ├── router.ts      # Tool routing and filtering
 │   │   └── search/        # BM25 tool discovery engine (internal)
@@ -998,7 +1038,7 @@ toolpack-sdk/
 **Current Version:** 0.1.0
 
 - ✓ **4 Built-in Providers** — OpenAI, Anthropic, Gemini, Ollama (+ custom provider API)
-- ✓ **79 Built-in Tools** — fs, exec, git, diff, web, coding, db, cloud, http, system
+- ✓ **90 Built-in Tools** — fs, exec, git, diff, web, coding, db, cloud, http, system, Kubernetes
 - ✓ **Workflow Engine** — AI-driven planning, step execution, retries, dynamic steps, progress events
 - ✓ **Mode System** — Agent, Coding, Chat, and custom modes via `createMode()` with `blockAllTools` support
 - ✓ **Tool Search** — BM25-based on-demand tool discovery for large tool libraries
