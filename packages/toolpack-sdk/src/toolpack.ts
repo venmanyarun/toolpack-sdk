@@ -7,6 +7,7 @@ import {
     CompletionChunk,
     EmbeddingRequest,
     EmbeddingResponse,
+    ContextWindowConfig,
 } from './providers/base/index.js';
 import { ProviderInfo, ProviderModelInfo } from "./types/index.js";
 import { OpenAIAdapter } from './providers/openai/index.js';
@@ -56,6 +57,9 @@ export interface ToolpackInitConfig {
 
     /** Load built-in tools (fs, http, etc.)? Default: false */
     tools?: boolean;
+
+    /** Context window management configuration for automatic conversation pruning/summarization */
+    contextWindow?: ContextWindowConfig;
 
     /** Custom tool projects to load in addition to built-ins */
     customTools?: ToolProject[];
