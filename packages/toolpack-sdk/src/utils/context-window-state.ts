@@ -7,6 +7,7 @@ import type { ContextWindowState, ContextWindowConfig } from '../types/index.js'
 export class ContextWindowStateManager {
   private states: Map<string, ContextWindowState> = new Map();
   private config: ContextWindowConfig;
+  private maxTokens: number = 100000;
 
   constructor(config: ContextWindowConfig) {
     this.config = config;
@@ -20,7 +21,7 @@ export class ContextWindowStateManager {
       this.states.set(conversationId, {
         conversationId,
         estimatedTokens: 0,
-        lastUpdated: new Date(),
+        lastUpdated: Date.now(),
         pruneCount: 0,
         lastPrunedAt: undefined,
         warningsSent: 0,
@@ -37,7 +38,7 @@ export class ContextWindowStateManager {
   updateTokenCount(conversationId: string, tokens: number): ContextWindowState {
     const state = this.getOrCreateState(conversationId);
     state.estimatedTokens = tokens;
-    state.lastUpdated = new Date();
+    state.lastUpdated = Date.now();
     return state;
   }
 
@@ -47,9 +48,9 @@ export class ContextWindowStateManager {
   recordPruneOperation(conversationId: string, tokensRecovered: number): ContextWindowState {
     const state = this.getOrCreateState(conversationId);
     state.pruneCount++;
-    state.lastPrunedAt = new Date();
+    state.lastPrunedAt = Date.now();
     state.estimatedTokens = Math.max(0, state.estimatedTokens - tokensRecovered);
-    state.lastUpdated = new Date();
+    state.lastUpdated = Date.now();
     return state;
   }
 
@@ -59,7 +60,7 @@ export class ContextWindowStateManager {
   recordWarning(conversationId: string): ContextWindowState {
     const state = this.getOrCreateState(conversationId);
     state.warningsSent++;
-    state.lastUpdated = new Date();
+    state.lastUpdated = Date.now();
     return state;
   }
 
@@ -70,7 +71,7 @@ export class ContextWindowStateManager {
     const state = this.getOrCreateState(conversationId);
     state.summarizationCount++;
     state.estimatedTokens = Math.max(0, state.estimatedTokens - tokensSaved);
-    state.lastUpdated = new Date();
+    state.lastUpdated = Date.now();
     return state;
   }
 
@@ -128,7 +129,7 @@ export class ContextWindowStateManager {
       pruneCount: state.pruneCount,
       summarizationCount: state.summarizationCount,
       warningsSent: state.warningsSent,
-      lastActivity: state.lastUpdated,
+      lastActivity: new Date(state.lastUpdated),
       contextWindowPercentage,
     };
   }
@@ -137,7 +138,7 @@ export class ContextWindowStateManager {
    * Gets conversations exceeding a threshold
    */
   getExceedingThreshold(threshold?: number): ContextWindowState[] {
-    const limit = threshold || (this.config.pruneThreshold || 100000);
+    const limit = threshold || (this.maxTokens * (this.config.pruneThreshold || 85) / 100);
     return Array.from(this.states.values()).filter((state) => state.estimatedTokens > limit);
   }
 
@@ -145,7 +146,7 @@ export class ContextWindowStateManager {
    * Gets conversations at risk (approaching threshold)
    */
   getAtRiskConversations(riskPercentage: number = 80): ContextWindowState[] {
-    const limit = this.config.pruneThreshold || 100000;
+    const limit = this.maxTokens;
     const riskThreshold = (limit * riskPercentage) / 100;
     return Array.from(this.states.values()).filter((state) => state.estimatedTokens > riskThreshold && state.estimatedTokens <= limit);
   }
@@ -214,7 +215,7 @@ export class ContextWindowStateManager {
 
     sorted.slice(0, 5).forEach((state) => {
       const ops = state.pruneCount + state.summarizationCount;
-      lines.push(`- ${state.conversationId}: ${state.pruneCount} prunes, ${state.summarizationCount} summarizations`);
+      lines.push(`- ${state.conversationId}: ${state.pruneCount} prunes, ${state.summarizationCount} summarizations (${ops} operations)`);
     });
 
     return lines.join('\n');
@@ -228,8 +229,8 @@ export class ContextWindowStateManager {
     for (const [key, value] of this.states.entries()) {
       result[key] = {
         ...value,
-        lastUpdated: new Date(value.lastUpdated),
-        lastPrunedAt: value.lastPrunedAt ? new Date(value.lastPrunedAt) : undefined,
+        lastUpdated: value.lastUpdated,
+        lastPrunedAt: value.lastPrunedAt,
       };
     }
     return result;
@@ -242,8 +243,8 @@ export class ContextWindowStateManager {
     for (const [key, value] of Object.entries(data)) {
       this.states.set(key, {
         ...value,
-        lastUpdated: new Date(value.lastUpdated),
-        lastPrunedAt: value.lastPrunedAt ? new Date(value.lastPrunedAt) : undefined,
+        lastUpdated: typeof value.lastUpdated === 'number' ? value.lastUpdated : new Date(value.lastUpdated).getTime(),
+        lastPrunedAt: value.lastPrunedAt && typeof value.lastPrunedAt !== 'number' ? new Date(value.lastPrunedAt).getTime() : value.lastPrunedAt,
       });
     }
   }
@@ -252,7 +253,7 @@ export class ContextWindowStateManager {
    * Prunes old conversations (no activity in specified time)
    */
   pruneInactiveConversations(inactivityMinutes: number = 60): string[] {
-    const cutoffTime = new Date(Date.now() - inactivityMinutes * 60 * 1000);
+    const cutoffTime = Date.now() - inactivityMinutes * 60 * 1000;
     const toDelete: string[] = [];
 
     for (const [conversationId, state] of this.states.entries()) {
@@ -312,12 +313,12 @@ export class ContextWindowStateManager {
         issues.push(`Negative warning count for ${conversationId}: ${state.warningsSent}`);
       }
 
-      if (!(state.lastUpdated instanceof Date)) {
-        issues.push(`Invalid lastUpdated date for ${conversationId}`);
+      if (typeof state.lastUpdated !== 'number' || state.lastUpdated <= 0) {
+        issues.push(`Invalid lastUpdated timestamp for ${conversationId}`);
       }
 
-      if (state.lastPrunedAt && !(state.lastPrunedAt instanceof Date)) {
-        issues.push(`Invalid lastPrunedAt date for ${conversationId}`);
+      if (state.lastPrunedAt !== undefined && (typeof state.lastPrunedAt !== 'number' || state.lastPrunedAt <= 0)) {
+        issues.push(`Invalid lastPrunedAt timestamp for ${conversationId}`);
       }
     }
 

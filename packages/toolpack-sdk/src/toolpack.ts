@@ -7,9 +7,8 @@ import {
     CompletionChunk,
     EmbeddingRequest,
     EmbeddingResponse,
-    ContextWindowConfig,
 } from './providers/base/index.js';
-import { ProviderInfo, ProviderModelInfo } from "./types/index.js";
+import { ProviderInfo, ProviderModelInfo, ContextWindowConfig } from "./types/index.js";
 import { OpenAIAdapter } from './providers/openai/index.js';
 import { AnthropicAdapter } from './providers/anthropic/index.js';
 import { GeminiAdapter } from './providers/gemini/index.js';
@@ -384,6 +383,7 @@ export class Toolpack extends EventEmitter {
             hitlConfig: Object.keys(hitlConfig).length > 0 ? hitlConfig : undefined,
             onToolConfirm: config.onToolConfirm,
             conversationId: config.conversationId,
+            contextWindowConfig: config.contextWindow,
         });
 
         const instance = new Toolpack(client, defaultProviderName, modeRegistry);

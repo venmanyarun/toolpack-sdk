@@ -5,7 +5,7 @@
  * to stay within context window limits.
  */
 
-import { Message } from '../types/index.js';
+import { Message, TextPart } from '../types/index.js';
 
 export interface PruneResult {
     removed: number; // number of messages removed
@@ -50,7 +50,7 @@ export function pruneMessages(
     });
 
     // Remove oldest prunable messages until target is met
-    for (const { index, message } of prunableMessages) {
+    for (const { message } of prunableMessages) {
         if (tokensReclaimed >= targetTokens) break;
 
         // Estimate tokens in this message
@@ -104,14 +104,14 @@ export function truncateMessage(message: Message, maxTokens: number): Message {
         }
 
         let charCount = 0;
-        const keptParts = [];
+        const keptParts: TextPart[] = [];
 
         for (const part of textParts) {
             if (part.type === 'text') {
                 const remaining = maxChars - charCount;
                 if (remaining <= 0) break;
 
-                const txt = (part as any).text;
+                const txt = part.text;
                 if (txt.length <= remaining) {
                     keptParts.push(part);
                     charCount += txt.length;

@@ -1,5 +1,38 @@
 import type { Message } from '../types/index.js';
-import { ToolpackError } from '../errors/index.js';
+import { SDKError } from '../errors/index.js';
+
+function getMessageText(message: Message): string {
+  if (message.content == null) {
+    return '';
+  }
+
+  if (typeof message.content === 'string') {
+    return message.content;
+  }
+
+  return message.content
+    .map((part) => {
+      if (part.type === 'text') {
+        return part.text;
+      }
+
+      if (part.type === 'image_url') {
+        return `[image: ${part.image_url.url}]`;
+      }
+
+      if (part.type === 'image_file') {
+        return `[image-file: ${part.image_file.path}]`;
+      }
+
+      if (part.type === 'image_data') {
+        return `[image-data: ${part.image_data.mimeType}]`;
+      }
+
+      return '';
+    })
+    .filter(Boolean)
+    .join(' ');
+}
 
 /**
  * Options for summarizing messages
@@ -68,12 +101,8 @@ The summary should be comprehensive yet concise, preserving all critical informa
 ---
 CONVERSATION:
 ${messages.map((m, i) => {
-  if (m.role === 'tool') {
-    const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
-    return `[Message ${i + 1}] ${m.role.toUpperCase()}: ${content.substring(0, 200)}...`;
-  }
-  const content = typeof m.content === 'string' ? m.content : m.content ? m.content[0]?.text || JSON.stringify(m.content) : '';
-  return `[Message ${i + 1}] ${m.role.toUpperCase()}: ${content}`;
+  const content = getMessageText(m);
+  return `[Message ${i + 1}] ${m.role.toUpperCase()}: ${content.substring(0, 200)}${content.length > 200 ? '...' : ''}`;
 })
   .join('\n')}
 ---
@@ -114,7 +143,7 @@ export function extractConversationKeypoints(messages: Message[]): {
 
   for (const message of messages) {
     if (message.role === 'user') {
-      const content = typeof message.content === 'string' ? message.content : message.content ? message.content[0]?.text || '' : '';
+      const content = getMessageText(message);
       lastUserMessage = content;
 
       // Extract potential goals (sentences ending with ? or containing action words)
@@ -128,7 +157,7 @@ export function extractConversationKeypoints(messages: Message[]): {
         topicMatches.forEach((t) => topics.add(t));
       }
     } else if (message.role === 'assistant') {
-      const content = typeof message.content === 'string' ? message.content : message.content ? message.content[0]?.text || '' : '';
+      const content = getMessageText(message);
 
       // Extract decisions (sentences with decision markers)
       if (content.includes('decided') || content.includes('concluded') || content.includes('determined')) {
@@ -299,7 +328,7 @@ ${result.summary.substring(0, 300)}${result.summary.length > 300 ? '...' : ''}
  */
 export function mergeSummarizationResults(results: SummarizationResult[]): SummarizationResult {
   if (results.length === 0) {
-    throw new ToolpackError('Cannot merge empty summarization results', 'CONTEXT_WINDOW_ERROR');
+    throw new SDKError('Cannot merge empty summarization results', 'CONTEXT_WINDOW_ERROR');
   }
 
   const merged: SummarizationResult = {
