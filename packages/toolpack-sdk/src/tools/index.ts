@@ -106,3 +106,9 @@ export {
 
 export{ McpToolManager,createMcpToolProject,disconnectMcpToolProject } from './mcp-tools/index.js';
 export type { McpToolsConfig, McpServerConfig } from './mcp-tools/index.js';
+
+// skill-tools
+export {
+    createSkillTools,
+    type SkillToolsOptions,
+} from './skill-tools/index.js';

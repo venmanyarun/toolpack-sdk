@@ -25,6 +25,7 @@ import { DEFAULT_MODE_NAME } from './modes/built-in-modes.js';
 import { WorkflowExecutor } from './workflows/workflow-executor.js';
 import { DEFAULT_WORKFLOW_CONFIG } from './workflows/workflow-types.js';
 import { createMcpToolProject, disconnectMcpToolProject, McpToolsConfig } from './tools/index.js';
+import type { ToolpackInterceptor, ToolpackNextFunction } from './interceptors/index.js';
 
 export interface ProviderOptions {
     /**
@@ -153,6 +154,16 @@ export interface ToolpackInitConfig {
 
     /** Optional conversation ID for tracking context across confirmations */
     conversationId?: string;
+
+    /**
+     * Optional interceptors that wrap each `generate()` call in the direct execution path.
+     * Each interceptor receives the full CompletionRequest and a `next()` function.
+     * Interceptors run in order (first in array runs outermost).
+     *
+     * Note: interceptors apply to `generate()` only, not `stream()`.
+     * The workflow execution path (when a mode has planning enabled) is also unaffected.
+     */
+    interceptors?: ToolpackInterceptor[];
 }
 
 /**
@@ -186,6 +197,7 @@ export class Toolpack extends EventEmitter {
     private knowledgeLayers: KnowledgeInstance[] = [];
     public customProviderNames: Set<string> = new Set();
     private mcpToolProject: ToolProject | null = null;
+    private _interceptors: ToolpackInterceptor[] = [];
 
     private constructor(client: AIClient, defaultProvider: string, modeRegistry: ModeRegistry) {
         super();
@@ -550,6 +562,16 @@ export class Toolpack extends EventEmitter {
         );
         instance.customProviderNames = customProviderNames;
         instance.mcpToolProject = mcpToolProject;
+        instance._interceptors = config.interceptors ?? [];
+
+        // Run the optional init() hook on each interceptor so they can
+        // validate config and warm up caches at startup, before the first message.
+        for (const interceptor of instance._interceptors) {
+            if (interceptor.init) {
+                await interceptor.init();
+            }
+        }
+
         // 5. Set default mode (and workflow config)
         const modeName = config.defaultMode || DEFAULT_MODE_NAME;
         const defaultMode = modeRegistry.get(modeName);
@@ -699,8 +721,25 @@ export class Toolpack extends EventEmitter {
             };
         }
 
-        // Direct execution
+        // Direct execution — run through interceptor chain if configured
+        if (this._interceptors.length > 0) {
+            const chain = this._buildInterceptorChain(
+                this._interceptors,
+                (r) => this.client.generate(r ?? req, providerName),
+            );
+            return chain(req);
+        }
         return this.client.generate(req, providerName);
+    }
+
+    private _buildInterceptorChain(
+        interceptors: ToolpackInterceptor[],
+        finalHandler: ToolpackNextFunction,
+    ): ToolpackNextFunction {
+        return interceptors.reduceRight<ToolpackNextFunction>(
+            (next, interceptor) => (r) => interceptor(r!, (modified) => next(modified ?? r)),
+            finalHandler,
+        );
     }
 
     async *stream(request: CompletionRequest, providerName?: string): AsyncGenerator<CompletionChunk> {

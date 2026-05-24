@@ -1,6 +1,6 @@
 # Toolpack SDK
 
-A unified TypeScript/Node.js SDK for building AI-powered applications with multiple providers, 97 built-in tools, a workflow engine, and a flexible mode system — all through a single API.
+A unified TypeScript/Node.js SDK for building AI-powered applications with multiple providers, 100+ built-in tools, a workflow engine, and a flexible mode system — all through a single API.
 
 [![npm version](https://img.shields.io/npm/v/toolpack-sdk.svg)](https://www.npmjs.com/package/toolpack-sdk)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
@@ -18,23 +18,25 @@ A unified TypeScript/Node.js SDK for building AI-powered applications with multi
 - **Mode System** — Built-in Agent and Chat modes, plus `createMode()` for custom modes with tool filtering
 - **HITL Confirmation** — Human-in-the-loop approval for high-risk operations with configurable bypass rules
 - **Custom Providers** — Bring your own provider by implementing the `ProviderAdapter` interface
-- **97 Built-in Tools** across 12 categories:
+- **101 Built-in Tools** across 14 categories (including 4 skill-tools and 2 mcp-tools):
 - **MCP Tool Server Integration** — dynamically bridge external Model Context Protocol servers into Toolpack as first-class tools via `createMcpToolProject()` and `disconnectMcpToolProject()`.
 
 | Category | Tools | Description |
 |----------|-------|-------------|
 | **`fs-tools`** | 18 | File system operations — read, write, search, tree, glob, batch read/write, etc. |
 | **`coding-tools`** | 12 | Code analysis — AST parsing, go to definition, find references, rename symbols, extract function |
-| **`git-tools`** | 9 | Version control — status, diff, log, blame, branch, commit, checkout |
+| **`git-tools`** | 10 | Version control — status, diff, log, blame, branch, commit, checkout, clone |
 | **`db-tools`** | 7 | Database operations — query, schema, tables, count, insert, update, delete (SQLite, PostgreSQL, MySQL) |
 | **`exec-tools`** | 6 | Command execution — run, run shell, background processes, kill, read output |
 | **`http-tools`** | 5 | HTTP requests — GET, POST, PUT, DELETE, download |
 | **`web-tools`** | 9 | Web interaction — fetch, search (Tavily/Brave/DuckDuckGo), scrape, extract links, map, metadata, sitemap, feed, screenshot |
 | **`system-tools`** | 5 | System info — env vars, cwd, disk usage, system info, set env |
 | **`github-tools`** | 9 | GitHub operations — PR reviews, review threads, file diffs, issue comments, GraphQL, repo contents |
+| **`slack-tools`** | 6 | Slack messaging — post messages, ephemeral messages, channel history, thread replies, reactions |
 | **`diff-tools`** | 3 | Patch operations — create, apply, and preview diffs |
 | **`cloud-tools`** | 3 | Deployments — deploy, status, list (via Netlify) |
 | **`k8s-tools`** | 11 | Kubernetes cluster inspection and management via kubectl |
+| **`skill-tools`** | 4 | Skill management — skill.create, skill.read, skill.update, skill.list |
 | **`mcp-tools`** | 2 | MCP integration — createMcpToolProject, disconnectMcpToolProject |
 
 ## Quick Start
@@ -61,7 +63,7 @@ const sdk = await Toolpack.init({
     anthropic: {},   // Reads ANTHROPIC_API_KEY from env
   },
   defaultProvider: 'openai',
-  tools: true,         // Load all 97 built-in tools
+  tools: true,         // Load all 100+ built-in tools
   defaultMode: 'agent', // Agent mode with workflow engine
 });
 
@@ -498,7 +500,7 @@ client.on('tool:failed', (event) => { /* ... */ });
 
 ## Custom Tools
 
-In addition to the 97 built-in tools, you can create and register your own custom tool projects using `createToolProject()`:
+In addition to the 100+ built-in tools, you can create and register your own custom tool projects using `createToolProject()`:
 
 ```typescript
 import { Toolpack, createToolProject } from 'toolpack-sdk';
@@ -595,6 +597,74 @@ const response = await toolpack.chat('How do I configure authentication?');
 - **Metadata Filtering**: Query with filters like `{ hasCode: true, category: 'api' }`
 
 See the [Knowledge package README](./packages/toolpack-knowledge/README.md) for full documentation.
+
+## Skills
+
+The skills system lets you define **reusable behavioral instructions** in `.skill.md` files and automatically inject them into requests based on message relevance — no agent code changes required.
+
+### Quick Start
+
+```typescript
+import { Toolpack, createSkillInterceptor, createSkillTools } from 'toolpack-sdk';
+
+const toolpack = await Toolpack.init({
+  provider: 'anthropic',
+  interceptors: [
+    createSkillInterceptor({ dir: '.toolpack/skills', maxSkills: 3, minScore: 0.3 }),
+  ],
+  customTools: [
+    createSkillTools({ dir: '.toolpack/skills' }),
+  ],
+});
+```
+
+Create a skill file at `.toolpack/skills/code-review.skill.md`:
+
+```markdown
+---
+name: code-review
+title: Code Review
+version: 1.0.0
+tags: ["coding", "quality"]
+updated: 2026-01-15T10:00:00.000Z
+---
+
+## Description
+
+Guides the agent through a structured code review process.
+
+## Triggers
+
+- "review this code"
+- "check my pull request"
+- "code review"
+
+## Instructions
+
+When reviewing code:
+1. Check for security vulnerabilities first
+2. Verify test coverage exists
+3. Flag naming inconsistencies
+4. Be constructive — suggest improvements, not just problems
+```
+
+When a user sends "review this PR", the interceptor automatically injects the `## Instructions` block before the LLM sees the message.
+
+### How It Works
+
+- **`createSkillInterceptor`** — An SDK interceptor that runs BM25 search on every user message and prepends matching skill instructions as a `<skill-instructions>` block. Validates all files at `Toolpack.init()` time.
+- **`createSkillTools`** — Four LLM-callable tools (`skill.create`, `skill.read`, `skill.update`, `skill.list`) for managing the skill library at runtime.
+
+### `createSkillInterceptor` Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `dir` | string | `.toolpack/skills` | Path to the skill files directory |
+| `maxSkills` | number | `3` | Maximum number of skills injected per message |
+| `minScore` | number | `0.3` | BM25 relevance threshold |
+| `onValidationError` | `'fail'` \| `'warn'` | `'fail'` | How to handle invalid skill files at startup |
+
+See the [Skills guide](https://toolpacksdk.com/guides/skills) and [Skill Tools reference](https://toolpacksdk.com/tools/skills) for full documentation.
 
 ## AI Agents (@toolpack-sdk/agents)
 
@@ -1422,18 +1492,21 @@ toolpack-sdk/
 │   │   └── ollama/        # Ollama adapter + provider (auto-discovery)
 │   ├── modes/             # Mode system (Agent, Chat, createMode)
 │   ├── workflows/         # Workflow engine (planner, executor, progress)
-│   ├── tools/             # 97 built-in tools + registry + router + BM25 search
+│   ├── tools/             # 100+ built-in tools + registry + router + BM25 search
 │   │   ├── fs-tools/      # File system (18 tools)
 │   │   ├── coding-tools/  # Code analysis (12 tools)
-│   │   ├── git-tools/     # Git operations (9 tools)
-│   │   ├── db-tools/      # Database operations (6 tools)
+│   │   ├── git-tools/     # Git operations (10 tools)
+│   │   ├── db-tools/      # Database operations (7 tools)
 │   │   ├── exec-tools/    # Command execution (6 tools)
 │   │   ├── http-tools/    # HTTP requests (5 tools)
-│   │   ├── web-tools/     # Web interaction (5 tools)
+│   │   ├── web-tools/     # Web interaction (9 tools)
 │   │   ├── system-tools/  # System info (5 tools)
+│   │   ├── github-tools/  # GitHub API (9 tools)
+│   │   ├── slack-tools/   # Slack messaging (6 tools)
 │   │   ├── diff-tools/    # Patch operations (3 tools)
 │   │   ├── cloud-tools/   # Deployments (3 tools)
 │   │   ├── k8s-tools/     # Kubernetes management (11 tools)
+│   │   ├── skill-tools/   # Skill management (4 tools)
 │   │   ├── registry.ts    # Tool registry and loading
 │   │   ├── router.ts      # Tool routing and filtering
 │   │   └── search/        # BM25 tool discovery engine (internal)
@@ -1449,7 +1522,7 @@ toolpack-sdk/
 **Current Version:** 0.1.0
 
 - ✓ **5 Built-in Providers** — OpenAI, Anthropic, Gemini, Ollama, OpenRouter (+ custom provider API)
-- ✓ **90 Built-in Tools** — fs, exec, git, diff, web, coding, db, cloud, http, system, Kubernetes
+- ✓ **100+ Built-in Tools** — fs, exec, git, diff, web, coding, db, cloud, http, system, Kubernetes, GitHub, Slack, Skills
 - ✓ **Workflow Engine** — AI-driven planning, plan-direct execution, parallel tool orchestration, progress events
 - ✓ **Mode System** — Agent, Coding, Chat, and custom modes via `createMode()` with `blockAllTools` support
 - ✓ **Tool Search** — BM25-based on-demand tool discovery for large tool libraries
