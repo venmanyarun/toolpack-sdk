@@ -25,7 +25,8 @@
     "access": "public"
   },
   "sideEffects": [
-    "./dist/tools/coding-tools/parsers/queries/*.js"
+    "./dist/tools/coding-tools/parsers/queries/*.js",
+    "./src/tools/coding-tools/parsers/queries/*.ts"
   ],
   "scripts": {
     "build": "tsup",
