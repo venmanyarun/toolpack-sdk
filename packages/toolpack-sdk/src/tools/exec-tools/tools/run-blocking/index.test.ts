@@ -62,12 +62,14 @@ describe('exec.run_blocking tool', () => {
     });
 
     it('should accept a cwd argument', async () => {
-        const cwd = realpathSync(tmpdir());
+        const cwd = tmpdir();
         const result = JSON.parse(await execRunBlockingTool.execute({
             command: `node -e "process.stdout.write(process.cwd())"`,
             cwd,
         }));
         expect(result.exitCode).toBe(0);
-        expect(result.stdout.trim()).toBe(cwd);
+        // Canonicalise both sides: macOS symlinks (/var → /private/var) and
+        // Windows 8.3 short paths (RUNNER~1 → runneradmin) differ in raw form.
+        expect(realpathSync.native(result.stdout.trim())).toBe(realpathSync.native(cwd));
     });
 });
