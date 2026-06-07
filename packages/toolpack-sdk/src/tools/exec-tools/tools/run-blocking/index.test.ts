@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { tmpdir } from 'node:os';
+import { realpathSync } from 'node:fs';
 import { execRunBlockingTool } from './index.js';
 
 describe('exec.run_blocking tool', () => {
@@ -61,7 +62,7 @@ describe('exec.run_blocking tool', () => {
     });
 
     it('should accept a cwd argument', async () => {
-        const cwd = tmpdir();
+        const cwd = realpathSync(tmpdir());
         const result = JSON.parse(await execRunBlockingTool.execute({
             command: `node -e "process.stdout.write(process.cwd())"`,
             cwd,
