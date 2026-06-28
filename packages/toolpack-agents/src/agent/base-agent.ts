@@ -1,6 +1,6 @@
 import { EventEmitter } from 'events';
 import type { RequestToolDefinition, ConversationStore, AssemblerOptions, ModeConfig, ToolpackInitConfig } from 'toolpack-sdk';
-import { Toolpack, InMemoryConversationStore } from 'toolpack-sdk';
+import { Toolpack, InMemoryConversationStore, AGENT_MODE } from 'toolpack-sdk';
 import type { Interceptor } from '../interceptors/types.js';
 import { composeChain, executeChain } from '../interceptors/chain.js';
 import { createCaptureInterceptor, CAPTURE_INTERCEPTOR_MARKER } from '../interceptors/builtins/capture-history.js';
@@ -9,7 +9,7 @@ import type { AgentInput, AgentResult, AgentOutput, AgentRunOptions, WorkflowSte
 import { AgentError } from './errors.js';
 import type { AgentMindConfig } from '../mind/types.js';
 import type { AgentMind } from '../mind/agent-mind.js';
-import type { AgentDelegationConfig } from './types.js';
+import type { AgentDelegationConfig, AgentSpawnConfig } from './types.js';
 
 /**
  * Abstract base class for all agents.
@@ -59,6 +59,16 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
    * Set to undefined (default) to opt out — zero cost when not configured.
    */
   delegation?: AgentDelegationConfig;
+
+  /**
+   * AI-driven dynamic agent spawning. When enabled, a `spawn_agent` tool is
+   * injected into every run() call so the LLM can instantiate one-off helper
+   * agents from templates, get their results, and continue — recursively up to
+   * `maxDepth` (default 3). Spawned agents are ephemeral: no channels, no
+   * registry entry, discarded after use.
+   * Set to undefined (default) to opt out — zero cost when not configured.
+   */
+  spawn?: AgentSpawnConfig;
 
   /**
    * Conversation history store. Auto-initialised to `InMemoryConversationStore` in the
@@ -196,6 +206,11 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
     }
   }
 
+  /** Returns true when no conversations are currently in progress for this agent. */
+  isIdle(): boolean {
+    return this._conversationLocks.size === 0;
+  }
+
   /**
    * Main entry point for agent invocation.
    * Implement this to handle incoming messages and route to appropriate logic.
@@ -214,7 +229,7 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
   protected async run(
     message: string,
     _options?: AgentRunOptions,
-    context?: { conversationId?: string },
+    context?: { conversationId?: string; spawnDepth?: number },
   ): Promise<AgentResult> {
     // Prefer the explicitly supplied conversationId; fall back to the
     // instance-level field (set by _bindChannel) for channel-driven invocations.
@@ -435,6 +450,274 @@ export abstract class BaseAgent<TIntent extends string = string> extends EventEm
               },
             });
           }
+        }
+      }
+
+      // Inject spawn tool when enabled and below the depth cap.
+      if (this.spawn?.enabled && this.spawn.templates.length > 0) {
+        const currentDepth = context?.spawnDepth ?? 0;
+        // Capture at tool-injection time so the execute closure doesn't read
+        // a mutable property that could be changed between registration and invocation.
+        const spawnConfig = this.spawn;
+        const maxDepth = spawnConfig.maxDepth ?? 3;
+
+        if (currentDepth < maxDepth) {
+          const spawnTemplates = spawnConfig.templates;
+          const hasSelfTemplate = spawnTemplates.some(t => t.name === 'self');
+          // Expose systemPromptAddition only when at least one template opts in.
+          const hasAnyPromptAddition = spawnTemplates.some(t => t.allowPromptAddition);
+          // Exclude 'self' from the listed templates — it has its own description line.
+          const namedTemplateDescriptions = spawnTemplates
+            .filter(t => t.name !== 'self')
+            .map(t => `- ${t.name}: ${t.description}`)
+            .join('\n');
+
+          const selfHint = hasSelfTemplate
+            ? `Use template name "self" to spawn a replica of the current agent.\n`
+            : '';
+
+          const promptAdditionProperty = hasAnyPromptAddition
+            ? {
+                systemPromptAddition: {
+                  type: 'string',
+                  description: 'Optional extra instructions appended to the template\'s system prompt (only honoured by templates that allow it).',
+                },
+              }
+            : {};
+
+          requestTools.push({
+            name: 'spawn_agent',
+            displayName: 'Spawn Agent',
+            description:
+              'Instantiate a temporary helper agent for a focused sub-task. ' +
+              'The agent runs once, returns its result, then is discarded.\n\n' +
+              `Available templates:\n${namedTemplateDescriptions}\n` +
+              selfHint +
+              `Spawn depth: ${currentDepth}/${maxDepth}`,
+            category: 'agent',
+            parameters: {
+              type: 'object',
+              properties: {
+                template: {
+                  type: 'string',
+                  description: hasSelfTemplate
+                    ? 'Template name to spawn, or "self" for a self-replica.'
+                    : 'Template name to spawn.',
+                },
+                task: {
+                  type: 'string',
+                  description: 'The specific task message for the spawned agent.',
+                },
+                ...promptAdditionProperty,
+              },
+              required: ['template', 'task'],
+            },
+            execute: async (args: Record<string, unknown>) => {
+              const templateName = String(args.template);
+              const task = String(args.task ?? '');
+
+              let spawnedMode: ModeConfig;
+              let spawnedName: string;
+              let spawnedDescription: string;
+              let spawnedModel: string | undefined;
+
+              // 'self' is only available when explicitly listed in templates.
+              // The template's systemPrompt(task) result is appended to the
+              // parent mode's prompt, allowing task-specific customisation.
+              const tpl = spawnTemplates.find(t => t.name === templateName);
+              if (!tpl) {
+                throw new Error(`Unknown spawn template: "${templateName}"`);
+              }
+
+              // Only append extra instructions when the template explicitly opts in.
+              const extra = (tpl.allowPromptAddition && args.systemPromptAddition)
+                ? `\n\n${String(args.systemPromptAddition)}`
+                : '';
+
+              if (templateName === 'self') {
+                const parentMode =
+                  typeof this.mode === 'string'
+                    ? { ...AGENT_MODE, name: this.mode }
+                    : this.mode;
+                const selfAddition = tpl.systemPrompt(task);
+                spawnedMode = {
+                  ...parentMode,
+                  name: `${parentMode.name}-replica-${Date.now()}`,
+                  systemPrompt:
+                    (parentMode.systemPrompt ?? '') +
+                    (selfAddition ? `\n\n${selfAddition}` : '') +
+                    extra,
+                };
+                spawnedName = `${this.name}-replica`;
+                spawnedDescription = this.description;
+                spawnedModel = this.model;
+              } else {
+                spawnedMode = {
+                  ...AGENT_MODE,
+                  name: `ephemeral-${tpl.name}-${Date.now()}`,
+                  systemPrompt: tpl.systemPrompt(task) + extra,
+                };
+                spawnedName = tpl.name;
+                spawnedDescription = tpl.description;
+                spawnedModel = tpl.model;
+              }
+
+              // Dynamic import breaks the base-agent ↔ ephemeral-agent circular
+              // dependency: ephemeral-agent.ts imports BaseAgent (value), so a
+              // static import here would make both sides depend on each other at
+              // module initialisation time. The lazy import defers until call time,
+              // by which point both modules are fully evaluated.
+              const { EphemeralAgent } = await import('./ephemeral-agent.js');
+              const ephemeral = new EphemeralAgent(
+                spawnedName,
+                spawnedDescription,
+                spawnedMode,
+                { toolpack: this.toolpack },
+              );
+              if (spawnedModel) ephemeral.model = spawnedModel;
+              // Forward spawn config so the spawned agent can itself spawn.
+              ephemeral.spawn = { ...spawnConfig };
+
+              const result = await ephemeral.invokeAgent({
+                message: task,
+                conversationId: `spawn-${Date.now()}`,
+                context: { spawnedBy: this.name, spawnDepth: currentDepth + 1 },
+              });
+
+              return {
+                output: result.output,
+                spawnedTemplate: templateName,
+                depth: currentDepth + 1,
+                metadata: result.metadata,
+              };
+            },
+          });
+
+          requestTools.push({
+            name: 'spawn_agents_parallel',
+            displayName: 'Spawn Agents in Parallel',
+            description:
+              'Instantiate multiple helper agents simultaneously and wait for all to finish. ' +
+              'Use when sub-tasks are independent and can run concurrently.\n\n' +
+              `Available templates:\n${namedTemplateDescriptions}\n` +
+              selfHint +
+              `Spawn depth: ${currentDepth}/${maxDepth}`,
+            category: 'agent',
+            parameters: {
+              type: 'object',
+              properties: {
+                tasks: {
+                  type: 'array',
+                  description: 'List of agents to spawn in parallel.',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      template: {
+                        type: 'string',
+                        description: hasSelfTemplate
+                          ? 'Template name to spawn, or "self" for a self-replica.'
+                          : 'Template name to spawn.',
+                      },
+                      task: {
+                        type: 'string',
+                        description: 'The specific task message for this agent.',
+                      },
+                      ...(hasAnyPromptAddition ? {
+                        systemPromptAddition: {
+                          type: 'string',
+                          description: 'Optional extra instructions appended to the template\'s system prompt (only honoured by templates that allow it).',
+                        },
+                      } : {}),
+                    },
+                    required: ['template', 'task'],
+                  },
+                },
+              },
+              required: ['tasks'],
+            },
+            execute: async (args: Record<string, unknown>) => {
+              const tasks = args.tasks as Array<Record<string, unknown>>;
+              if (!Array.isArray(tasks) || tasks.length === 0) {
+                throw new Error('spawn_agents_parallel requires at least one task.');
+              }
+
+              const { EphemeralAgent } = await import('./ephemeral-agent.js');
+
+              const results = await Promise.all(
+                tasks.map(async (entry) => {
+                  const templateName = String(entry.template);
+                  const task = String(entry.task ?? '');
+
+                  const tpl = spawnTemplates.find(t => t.name === templateName);
+                  if (!tpl) {
+                    throw new Error(`Unknown spawn template: "${templateName}"`);
+                  }
+
+                  // Only append if the template explicitly opts in.
+                  const extra = (tpl.allowPromptAddition && entry.systemPromptAddition)
+                    ? `\n\n${String(entry.systemPromptAddition)}`
+                    : '';
+
+                  let spawnedMode: ModeConfig;
+                  let spawnedName: string;
+                  let spawnedDescription: string;
+                  let spawnedModel: string | undefined;
+
+                  if (templateName === 'self') {
+                    const parentMode =
+                      typeof this.mode === 'string'
+                        ? { ...AGENT_MODE, name: this.mode }
+                        : this.mode;
+                    const selfAddition = tpl.systemPrompt(task);
+                    spawnedMode = {
+                      ...parentMode,
+                      name: `${parentMode.name}-replica-${Date.now()}`,
+                      systemPrompt:
+                        (parentMode.systemPrompt ?? '') +
+                        (selfAddition ? `\n\n${selfAddition}` : '') +
+                        extra,
+                    };
+                    spawnedName = `${this.name}-replica`;
+                    spawnedDescription = this.description;
+                    spawnedModel = this.model;
+                  } else {
+                    spawnedMode = {
+                      ...AGENT_MODE,
+                      name: `ephemeral-${tpl.name}-${Date.now()}`,
+                      systemPrompt: tpl.systemPrompt(task) + extra,
+                    };
+                    spawnedName = tpl.name;
+                    spawnedDescription = tpl.description;
+                    spawnedModel = tpl.model;
+                  }
+
+                  const ephemeral = new EphemeralAgent(
+                    spawnedName,
+                    spawnedDescription,
+                    spawnedMode,
+                    { toolpack: this.toolpack },
+                  );
+                  if (spawnedModel) ephemeral.model = spawnedModel;
+                  ephemeral.spawn = { ...spawnConfig };
+
+                  const result = await ephemeral.invokeAgent({
+                    message: task,
+                    conversationId: `spawn-${Date.now()}`,
+                    context: { spawnedBy: this.name, spawnDepth: currentDepth + 1 },
+                  });
+
+                  return {
+                    output: result.output,
+                    spawnedTemplate: templateName,
+                    depth: currentDepth + 1,
+                    metadata: result.metadata,
+                  };
+                }),
+              );
+
+              return { results };
+            },
+          });
         }
       }
 

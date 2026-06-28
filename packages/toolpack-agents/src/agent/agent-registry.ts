@@ -26,6 +26,11 @@ export class AgentRegistry implements IAgentRegistry {
   /** In-memory store for pending human-in-the-loop questions. Stored as Map<conversationId, PendingAsk[]> */
   private pendingAsks: Map<string, PendingAsk[]> = new Map();
 
+  private _started = false;
+  private _restarting = false;
+  private _restartScheduled = false;
+  private _deadlineTimer?: ReturnType<typeof setTimeout>;
+
   /**
    * @param agents Agent instances to coordinate. Each agent's `channels` and
    *   `interceptors` are configured on the agent itself.
@@ -69,6 +74,109 @@ export class AgentRegistry implements IAgentRegistry {
     for (const agent of this.agentList) {
       await agent.start();
     }
+
+    this._started = true;
+  }
+
+  /**
+   * Add an agent to the registry. If the registry is already started the agent
+   * is fully wired and started immediately; otherwise it is deferred until start().
+   */
+  async addAgent(agent: BaseAgent): Promise<void> {
+    this.agentList.push(agent);
+
+    if (!this._started) return;
+
+    await agent._ensureToolpack();
+    agent._registry = this;
+    this.instances.set(agent.name, agent);
+
+    for (const channel of agent.channels ?? []) {
+      if (channel.name) {
+        this.channels.set(channel.name, channel);
+      }
+    }
+
+    await agent.start();
+  }
+
+  /**
+   * Remove an agent by name. Stops the agent and unregisters its channels.
+   * No-op when the name is not found.
+   */
+  async removeAgent(name: string): Promise<void> {
+    const agent = this.instances.get(name) as BaseAgent | undefined;
+    if (!agent) return;
+
+    await agent.stop();
+
+    this.instances.delete(name);
+    this.agentList = this.agentList.filter(a => a.name !== name);
+
+    for (const channel of agent.channels ?? []) {
+      if (channel.name) {
+        this.channels.delete(channel.name);
+      }
+    }
+  }
+
+  /** Returns true when all registered agents have no in-progress conversations. */
+  isAllIdle(): boolean {
+    return this.agentList.every(agent => agent.isIdle());
+  }
+
+  /**
+   * Schedule a graceful restart once all agents are idle, or force one after
+   * maxWaitMinutes (default 30). Idempotent — subsequent calls are ignored.
+   *
+   * Uses process.exit(0) so a process manager (PM2, systemd) can restart with
+   * the updated dist/ and .env. Override _exit() in tests to prevent that.
+   */
+  scheduleRestart(options?: { maxWaitMinutes?: number }): void {
+    if (this._restartScheduled) return;
+    this._restartScheduled = true;
+
+    const maxWaitMs = (options?.maxWaitMinutes ?? 30) * 60 * 1000;
+
+    const tryRestart = () => {
+      if (!this._restarting && this.isAllIdle()) {
+        void this._executeRestart();
+      }
+    };
+
+    tryRestart();
+    if (this._restarting) return;
+
+    for (const agent of this.agentList) {
+      agent.on('agent:complete', tryRestart);
+    }
+
+    this._deadlineTimer = setTimeout(() => {
+      void this._executeRestart();
+    }, maxWaitMs);
+  }
+
+  async _executeRestart(): Promise<void> {
+    if (this._restarting) return;
+    this._restarting = true;
+
+    if (this._deadlineTimer) {
+      clearTimeout(this._deadlineTimer);
+      this._deadlineTimer = undefined;
+    }
+
+    await this.stop();
+
+    const drainDeadline = Date.now() + 30_000;
+    while (!this.isAllIdle() && Date.now() < drainDeadline) {
+      await new Promise<void>(r => setTimeout(r, 100));
+    }
+
+    this._exit(0);
+  }
+
+  protected _exit(code: number): void {
+    process.exit(code);
   }
 
   /**

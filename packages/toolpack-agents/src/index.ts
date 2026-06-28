@@ -9,6 +9,8 @@ export {
   AgentRunOptions,
   BaseAgentOptions,
   AgentDelegationConfig,
+  AgentSpawnTemplate,
+  AgentSpawnConfig,
   WorkflowStep,
   IAgentRegistry,
   AgentInstance,
@@ -18,8 +20,11 @@ export {
 } from './agent/types.js';
 
 export { BaseAgent, AgentEvents } from './agent/base-agent.js';
+export { EphemeralAgent } from './agent/ephemeral-agent.js';
 export { AgentRegistry } from './agent/agent-registry.js';
 export { AgentError } from './agent/errors.js';
+export { HotReloadWatcher } from './agent/hot-reload-watcher.js';
+export type { HotReloadWatcherOptions, WatchFn, SpawnFn } from './agent/hot-reload-watcher.js';
 
 // Built-in agents
 export { ResearchAgent } from './agents/research-agent.js';

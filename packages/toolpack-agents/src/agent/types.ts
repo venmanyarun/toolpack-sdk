@@ -49,6 +49,54 @@ export interface AgentDelegationConfig {
   mode?: 'await' | 'forget';
 }
 
+/**
+ * Definition of a single spawnable agent template.
+ * Templates are config objects — no subclassing required.
+ * The SDK instantiates an EphemeralAgent from this at spawn time.
+ */
+export interface AgentSpawnTemplate {
+  /** Unique name for this template; use `'self'` as a reserved name for self-replication. */
+  name: string;
+  /** Human-readable purpose shown to the LLM so it can pick the right template. */
+  description: string;
+  /**
+   * Factory that receives the task string and returns the system prompt for the
+   * spawned agent. Called once per spawn invocation.
+   */
+  systemPrompt: (task: string) => string;
+  /** Model override for spawned agents of this template. Inherits parent model when omitted. */
+  model?: string;
+  /**
+   * Allow the LLM to append extra instructions to this template's system prompt
+   * via the `systemPromptAddition` tool parameter. Defaults to `false`.
+   * Only enable this for templates where LLM-driven prompt customisation is safe.
+   */
+  allowPromptAddition?: boolean;
+}
+
+/**
+ * Configuration for AI-driven dynamic agent spawning.
+ * When enabled, a `spawn_agent` tool is injected into every `run()` call so
+ * the LLM can instantiate a one-off helper agent, get its result, and continue.
+ * Spawned agents are ephemeral: no channels, no registry entry, discarded after use.
+ */
+export interface AgentSpawnConfig {
+  /** Must be true for the spawn tool to be injected. */
+  enabled: boolean;
+  /**
+   * List of agent templates available for spawning.
+   * The LLM sees each template's name and description to decide which to use.
+   * Add a template with `name: 'self'` to opt in to self-replication — without
+   * it, the `spawn_agent` tool will not advertise or accept `"self"` as a target.
+   */
+  templates: AgentSpawnTemplate[];
+  /**
+   * Maximum recursive spawn depth (default: 3).
+   * When a spawned agent reaches this depth, the spawn tool is not injected —
+   * stopping the chain without throwing an error.
+   */
+  maxDepth?: number;
+}
 
 /**
  * Input structure for agent invocation.
@@ -383,4 +431,13 @@ export interface IAgentRegistry {
    * @returns Number of asks cleaned up
    */
   cleanupExpiredAsks(): number;
+
+  /** Returns true when all registered agents have no in-progress conversations. */
+  isAllIdle?(): boolean;
+
+  /**
+   * Schedule a graceful restart once all agents become idle, or after maxWaitMinutes
+   * (default 30) if idle is never reached. Idempotent — subsequent calls are no-ops.
+   */
+  scheduleRestart?(options?: { maxWaitMinutes?: number }): void;
 }

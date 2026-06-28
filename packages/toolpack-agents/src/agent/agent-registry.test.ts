@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { AgentRegistry } from './agent-registry.js';
 import { BaseAgent } from './base-agent.js';
 import { AgentInput, AgentResult, BaseAgentOptions } from './types.js';
@@ -430,6 +430,209 @@ describe('AgentRegistry', () => {
 
         expect(registry.hasPendingAsks('test-conv')).toBe(false);
       });
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Testable subclass that intercepts process.exit so tests don't die.
+  // ---------------------------------------------------------------------------
+  class TestableRegistry extends AgentRegistry {
+    readonly exitCalls: number[] = [];
+    protected override _exit(code: number): void {
+      this.exitCalls.push(code);
+    }
+  }
+
+  describe('addAgent', () => {
+    it('adds an agent before start — deferred wiring', async () => {
+      const mockToolpack = createMockToolpack();
+      const registry = new AgentRegistry([]);
+      const agent = new TestAgent({ toolpack: mockToolpack });
+
+      await registry.addAgent(agent);
+      // Not started yet — instances map is still empty
+      expect(registry.getAgent('test-agent')).toBeUndefined();
+
+      await registry.start();
+      expect(registry.getAgent('test-agent')).toBeDefined();
+    });
+
+    it('adds and starts agent on an already-started registry', async () => {
+      const mockToolpack = createMockToolpack();
+      const registry = new AgentRegistry([]);
+      await registry.start();
+
+      const agent = new TestAgent({ toolpack: mockToolpack });
+      const channel = new TestChannel();
+      channel.name = 'dynamic-channel';
+      agent.channels = [channel];
+
+      await registry.addAgent(agent);
+
+      expect(registry.getAgent('test-agent')).toBeDefined();
+      expect(registry.getChannel('dynamic-channel')).toBeDefined();
+    });
+  });
+
+  describe('removeAgent', () => {
+    it('removes agent and its named channels', async () => {
+      const mockToolpack = createMockToolpack();
+      const channel = new TestChannel();
+      channel.name = 'removable-channel';
+      const agent = new TestAgent({ toolpack: mockToolpack });
+      agent.channels = [channel];
+
+      const registry = new AgentRegistry([agent]);
+      await registry.start();
+
+      await registry.removeAgent('test-agent');
+
+      expect(registry.getAgent('test-agent')).toBeUndefined();
+      expect(registry.getChannel('removable-channel')).toBeUndefined();
+    });
+
+    it('is a no-op for an unknown agent name', async () => {
+      const registry = new AgentRegistry([]);
+      await registry.start();
+      await expect(registry.removeAgent('ghost')).resolves.toBeUndefined();
+    });
+  });
+
+  describe('isAllIdle', () => {
+    it('returns true when the registry has no agents', () => {
+      const registry = new AgentRegistry([]);
+      expect(registry.isAllIdle()).toBe(true);
+    });
+
+    it('returns true when all agents have no in-flight conversations', async () => {
+      const mockToolpack = createMockToolpack();
+      const agent = new TestAgent({ toolpack: mockToolpack });
+      const registry = new AgentRegistry([agent]);
+      await registry.start();
+
+      expect(registry.isAllIdle()).toBe(true);
+    });
+  });
+
+  describe('scheduleRestart', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('calls _exit(0) immediately when all agents are already idle', async () => {
+      vi.useFakeTimers();
+      const registry = new TestableRegistry([]);
+      await registry.start();
+
+      registry.scheduleRestart();
+      await vi.runAllTimersAsync();
+
+      expect(registry.exitCalls).toEqual([0]);
+    });
+
+    it('calls _exit(0) after agent:complete when not initially idle', async () => {
+      vi.useFakeTimers();
+      const mockToolpack = createMockToolpack();
+      const agent = new TestAgent({ toolpack: mockToolpack });
+      const registry = new TestableRegistry([agent]);
+      await registry.start();
+
+      vi.spyOn(registry, 'isAllIdle')
+        .mockReturnValueOnce(false)
+        .mockReturnValue(true);
+
+      registry.scheduleRestart();
+      expect(registry.exitCalls).toHaveLength(0);
+
+      agent.emit('agent:complete', { output: 'done' });
+      await vi.runAllTimersAsync();
+
+      expect(registry.exitCalls).toEqual([0]);
+    });
+
+    it('forces _exit(0) after the deadline even when agents stay busy', async () => {
+      vi.useFakeTimers();
+      const registry = new TestableRegistry([]);
+      await registry.start();
+
+      vi.spyOn(registry, 'isAllIdle')
+        .mockReturnValueOnce(false)
+        .mockReturnValue(true);
+
+      registry.scheduleRestart({ maxWaitMinutes: 30 });
+
+      await vi.advanceTimersByTimeAsync(30 * 60 * 1000 + 1);
+      await vi.runAllTimersAsync();
+
+      expect(registry.exitCalls).toEqual([0]);
+    });
+
+    it('is idempotent — second scheduleRestart call is ignored', async () => {
+      vi.useFakeTimers();
+      const registry = new TestableRegistry([]);
+      await registry.start();
+
+      registry.scheduleRestart();
+      registry.scheduleRestart();
+      await vi.runAllTimersAsync();
+
+      expect(registry.exitCalls).toHaveLength(1);
+    });
+  });
+
+  describe('_executeRestart', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('_restarting guard prevents double _exit', async () => {
+      vi.useFakeTimers();
+      const registry = new TestableRegistry([]);
+      await registry.start();
+
+      void registry._executeRestart();
+      void registry._executeRestart();
+      await vi.runAllTimersAsync();
+
+      expect(registry.exitCalls).toHaveLength(1);
+    });
+
+    it('stops all channels before calling _exit', async () => {
+      vi.useFakeTimers();
+      const mockToolpack = createMockToolpack();
+
+      class StoppableChannel extends TestChannel {
+        stopped = false;
+        override async stop(): Promise<void> { this.stopped = true; }
+      }
+
+      const channel = new StoppableChannel();
+      const agent = new TestAgent({ toolpack: mockToolpack });
+      agent.channels = [channel];
+
+      const registry = new TestableRegistry([agent]);
+      await registry.start();
+
+      await registry._executeRestart();
+
+      expect(channel.stopped).toBe(true);
+      expect(registry.exitCalls).toEqual([0]);
+    });
+
+    it('exits even when drain loop reaches its deadline', async () => {
+      vi.useFakeTimers();
+      const registry = new TestableRegistry([]);
+      await registry.start();
+
+      // Simulate agents always busy — loop must exhaust its 30 s timeout.
+      vi.spyOn(registry, 'isAllIdle').mockReturnValue(false);
+
+      const restartPromise = registry._executeRestart();
+      // Advance through the 30 s drain loop (300 × 100 ms iterations).
+      await vi.advanceTimersByTimeAsync(31_000);
+      await restartPromise;
+
+      expect(registry.exitCalls).toEqual([0]);
     });
   });
 });

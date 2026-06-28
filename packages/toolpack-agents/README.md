@@ -13,6 +13,8 @@ Build production-ready AI agents with channels, workflows, and event-driven arch
 - **Human-in-the-Loop** — `ask()` support for two-way channels
 - **Knowledge Integration** — Built-in RAG support with knowledge bases
 - **Agent Mind** — Persistent cognitive layer: goals, beliefs, reflections, cross-run recall
+- **Agent Spawning** — LLM-driven ephemeral sub-agents via `spawn_agent` / `spawn_agents_parallel` tools, with depth control and parallel execution
+- **Hot Reload** — File watcher + graceful restart so code changes take effect without dropping conversations
 - **Evals** — `EvalDataset`, `EvalRunner`, 4 scorer types, regression reports
 - **OTel Tracing** — OpenTelemetry interceptor for distributed traces
 - **Type-Safe** — Full TypeScript support
@@ -441,6 +443,92 @@ agent.on('agent:error', (error) => {
 });
 ```
 
+## Hot Reload & Graceful Restart
+
+`HotReloadWatcher` watches your source files for changes and triggers a graceful restart once all in-flight conversations finish. The process exits cleanly (`process.exit(0)`) so a process manager (PM2, systemd) can bring it back up with the new `dist/` and `.env`.
+
+### How it works
+
+1. A file change is detected in a watched directory.
+2. A 30-second debounce timer starts. Every new change resets it.
+3. After 30 seconds of silence:
+   - `.ts` / `.tsx` → runs `tsc --build`. On success, calls `onRestartNeeded`.
+   - `.env*` → calls `onRestartNeeded` directly (no compile step).
+4. `onRestartNeeded` calls `registry.scheduleRestart()`.
+5. The registry waits for all active conversations to finish, then calls `process.exit(0)`.
+6. The process manager restarts the process with fresh compiled output and environment variables.
+
+### Setup
+
+```typescript
+import { AgentRegistry, HotReloadWatcher } from '@toolpack-sdk/agents';
+
+const registry = new AgentRegistry([myAgent]);
+await registry.start();
+
+const watcher = new HotReloadWatcher({
+  watchPaths: ['./src'],      // Directories or files to watch
+  cwd: process.cwd(),         // Working directory for tsc --build
+  debounceMs: 30_000,         // Wait 30s of silence before acting (default)
+  onRestartNeeded: () => registry.scheduleRestart(),
+  onCompileError: (msg) => console.error('[tsc]', msg),
+});
+watcher.start();
+```
+
+### scheduleRestart options
+
+```typescript
+registry.scheduleRestart({
+  maxWaitMinutes: 30, // Force restart after this many minutes even if conversations are still active (default: 30)
+});
+```
+
+`scheduleRestart()` is **idempotent** — calling it multiple times (e.g., two files change within the same debounce window) has no effect after the first call.
+
+### Persistent conversation history across restarts
+
+In-memory conversation history is lost when the process exits. Use `SQLiteConversationStore` from `toolpack-sdk` so history survives restarts. Requires `better-sqlite3`:
+
+```bash
+npm install better-sqlite3
+```
+
+```typescript
+import { SQLiteConversationStore } from 'toolpack-sdk';
+
+class MyAgent extends BaseAgent {
+  name = 'my-agent';
+  description = 'My agent';
+  mode = 'chat';
+
+  conversationHistory = new SQLiteConversationStore({ dbPath: './conversations.db' });
+
+  async invokeAgent(input) {
+    return this.run(input.message);
+  }
+}
+```
+
+The SQLite file survives `process.exit(0)`. The new process re-opens the same file and picks up full conversation history — users continue mid-conversation as if nothing happened.
+
+### AgentRegistry — dynamic agent management
+
+The registry supports adding and removing agents at runtime after `start()`:
+
+```typescript
+// Add an agent after the registry is already running
+const newAgent = new ResearchAgent({ apiKey: process.env.ANTHROPIC_API_KEY });
+await registry.addAgent(newAgent); // wired + started immediately
+
+// Remove an agent by name (stops it and unregisters its channels)
+await registry.removeAgent('research-agent');
+```
+
+### Self-evolving agents
+
+If an agent uses a `CodingAgent` sub-agent to edit its own source files, the orchestrator holds a conversation lock for the duration of that task. The hot reload watcher detects the file changes and calls `scheduleRestart()` — but the restart only executes after the orchestrator's conversation finishes and the lock is released. The new code takes effect on the next PM2/systemd restart cycle.
+
 ## Extending Built-in Agents
 
 Customize built-in agents with your own prompts and logic:
@@ -516,6 +604,34 @@ class AgentRegistry {
   getAgent(name: string): AgentInstance | undefined;
   getChannel(name: string): ChannelInterface | undefined;
   invoke(agentName: string, input: AgentInput): Promise<AgentResult>;
+
+  // Dynamic agent management
+  addAgent(agent: BaseAgent): Promise<void>;    // Wires + starts immediately if registry is already running
+  removeAgent(name: string): Promise<void>;     // Stops the agent and unregisters its channels
+
+  // Graceful restart
+  isAllIdle(): boolean;                                              // True when no agent has an active conversation
+  scheduleRestart(options?: { maxWaitMinutes?: number }): void;     // Idempotent; waits for idle then exits
+}
+```
+
+### HotReloadWatcher
+
+```typescript
+class HotReloadWatcher {
+  constructor(options: HotReloadWatcherOptions);
+  start(): void;
+  stop(): void;
+}
+
+interface HotReloadWatcherOptions {
+  watchPaths: string[];                    // Directories or files to watch
+  cwd?: string;                            // Working directory for tsc --build (default: process.cwd())
+  debounceMs?: number;                     // Silence window before acting (default: 30 000 ms)
+  onRestartNeeded: () => void;             // Called after a successful compile or an .env change
+  onCompileError?: (stderr: string) => void; // Called when tsc --build exits non-zero (restart NOT triggered)
+  spawnFn?: SpawnFn;                       // Inject a custom spawn function (testing)
+  watchFn?: WatchFn;                       // Inject a custom watch function (testing)
 }
 ```
 
@@ -710,6 +826,65 @@ No transport configured for delegation
 Failed to invoke agent "data-agent" at http://localhost:3000: fetch failed
 ```
 → Verify the JSON-RPC server is running and the URL/port is correct.
+
+## Agent Spawning
+
+When `spawn` is configured on a `BaseAgent`, two tools are injected into every `run()` call: `spawn_agent` and `spawn_agents_parallel`. The LLM uses these to instantiate lightweight helper agents on-demand, get their results, and continue — all within a single conversation turn. Spawned agents are ephemeral: no channels, no registry entry, discarded after use.
+
+```typescript
+import { BaseAgent } from '@toolpack-sdk/agents';
+import type { AgentSpawnConfig } from '@toolpack-sdk/agents';
+
+class OrchestratorAgent extends BaseAgent {
+  name = 'orchestrator';
+  description = 'Coordinates research and coding tasks';
+  mode = 'agent';
+
+  spawn: AgentSpawnConfig = {
+    enabled: true,
+    templates: [
+      {
+        name: 'researcher',
+        description: 'Searches the web and summarises findings on a topic.',
+        systemPrompt: (task) => `You are a focused research agent. Task: ${task}`,
+      },
+      {
+        name: 'coder',
+        description: 'Writes or refactors code for a specific request.',
+        systemPrompt: (task) => `You are a senior engineer. Task: ${task}`,
+        model: 'claude-opus-4-8',
+      },
+    ],
+    maxDepth: 3, // spawned agents can themselves spawn, up to this depth
+  };
+
+  async invokeAgent(input) {
+    return this.run(input.message);
+  }
+}
+```
+
+**Key options:**
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enabled` | `boolean` | — | Must be `true` for tools to be injected |
+| `templates` | `AgentSpawnTemplate[]` | — | Available spawn targets. LLM picks by `name` + `description`. |
+| `maxDepth` | `number` | `3` | Max recursive spawn depth. At the limit, spawn tools are silently omitted. |
+
+**Template options:**
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `name` | `string` | Unique identifier. Use `'self'` for self-replication. |
+| `description` | `string` | Purpose shown to the LLM. |
+| `systemPrompt` | `(task: string) => string` | Called at spawn time with the task string. |
+| `model` | `string` | Model override. Inherits parent when omitted. |
+| `allowPromptAddition` | `boolean` | Allow LLM to append extra instructions via `systemPromptAddition`. Default: `false`. |
+
+**Parallel spawning** — the LLM can call `spawn_agents_parallel` with an array of tasks; all agents run via `Promise.all`.
+
+**Self-replication** — add `{ name: 'self', ... }` to the templates list. The replica inherits the parent's mode and system prompt with the template's `systemPrompt(task)` appended.
 
 ## Interceptors
 
